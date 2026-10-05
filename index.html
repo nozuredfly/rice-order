@@ -25,6 +25,10 @@ body{background:var(--bg);color:var(--ink);font-family:"Hiragino Sans","Hiragino
 button,input,select,textarea{font:inherit;color:inherit}
 header{background:var(--indigo);color:#fff;padding:14px 18px 12px;display:flex;align-items:center;gap:12px}
 .stamp{width:38px;height:38px;border:2px solid var(--gold);color:var(--gold);border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:18px;flex:none}
+.newbtn{margin-left:auto;flex:none;background:#fff;color:var(--indigo);border:none;border-radius:999px;padding:8px 14px;font-weight:700;font-size:14px}
+.draftbar{background:#FFF6E0;border:1px solid #E8D29A;color:#7A5B12;border-radius:6px;padding:9px 12px;margin-bottom:12px;font-size:14px}
+input[type=date]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;min-height:46px;text-align:left}
+input[type=date]::-webkit-date-and-time-value{text-align:left}
 header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.04em}
 header p{margin:0;font-size:12px;opacity:.8}
 main{max-width:640px;margin:0 auto;padding:14px 12px 170px}
@@ -114,11 +118,13 @@ a.btn{text-decoration:none;text-align:center;display:block}
 <header>
   <div class="stamp">受</div>
   <div><h1>お米 受注・配達</h1><p>新鮮組　記入→記録→LINEへ</p></div>
+  <button id="btnNew" class="newbtn">＋ 新しい受注</button>
 </header>
 
 <main>
 <!-- 入力 -->
 <section class="view on" id="v-input">
+  <div class="draftbar" id="draftBar" hidden>✎ 入力の途中です。新しく始めるときは右上の「＋ 新しい受注」を押してください。</div>
   <div class="banner" id="queueBanner" hidden><span id="queueText"></span><button class="btn small" id="btnFlush">再送</button></div>
 
   <div class="slip">
@@ -165,7 +171,6 @@ a.btn{text-decoration:none;text-align:center;display:block}
     <div class="row"><label>置き場所・不在時の対応</label><input data-f="place"></div>
     <div class="row"><label>備考（駐車場所、階段のみ、目印など）</label><textarea data-f="note" rows="2"></textarea></div>
   </div>
-  <p class="note" style="text-align:center"><button class="link" id="btnClear" style="color:var(--muted)">入力をすべて消す</button></p>
 </section>
 
 <!-- 受注一覧 -->
@@ -256,7 +261,7 @@ let F=LS.get('rice_draft',null)||blank();
 
 function today(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10)}
 function blank(){return{date:today(),staff:S.staff||'',tel:'',name:'',kana:'',zip:'',addr:'',items:[{brand:'',type:'白米',size:MAIN_SIZE,qty:1}],total:'',totalManual:false,pay:'代引き',receipt:'不要',receiptName:'',delivDate:'',time:'指定なし',timeNote:'',place:'',note:''}}
-function saveDraft(){LS.set('rice_draft',F)}
+function saveDraft(){LS.set('rice_draft',F);if(typeof updateDraftBar==='function'&&document.getElementById('draftBar'))updateDraftBar()}
 function toast(msg,err){const t=$('#toast');t.textContent=msg;t.className=err?'err':'';t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3200)}
 function fmtDate(s){if(!s)return'';const d=new Date(s+'T00:00:00');if(isNaN(d))return s;return`${d.getMonth()+1}/${d.getDate()}（${'日月火水木金土'[d.getDay()]}）`}
 function makeId(){const d=new Date(),p=n=>String(n).padStart(2,'0');return`R${String(d.getFullYear()).slice(2)}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`}
@@ -348,7 +353,13 @@ $('#items').addEventListener('input',e=>{
 });
 $('#items').addEventListener('focusout',e=>{if(e.target.dataset.k==='brandText')renderItems()});
 $('#btnAddItem').onclick=()=>{F.items.push({brand:'',type:'白米',size:MAIN_SIZE,qty:1});renderItems()};
-$('#btnClear').onclick=()=>{if(confirm('入力内容をすべて消しますか？')){F=blank();saveDraft();bindFields()}};
+function hasContent(){return !!(F.name||F.kana||F.tel||F.zip||F.addr||F.place||F.note||F.delivDate||F.items.some(i=>i.brand))}
+function newOrder(){const keep={staff:F.staff||S.staff||''};F=Object.assign(blank(),keep);saveDraft();bindFields();$('#sugg').hidden=true;scrollTo(0,0)}
+function updateDraftBar(){$('#draftBar').hidden=!hasContent()}
+$('#btnNew').onclick=()=>{
+  if(hasContent()&&!confirm('入力中の内容を消して、新しい受注を始めますか？'))return;
+  newOrder();$('nav button[data-v=input]').click();toast('新しい受注を入力できます');
+};
 
 /* 電話番号から過去のお客様を呼び出し */
 function formatTel(v){
@@ -410,9 +421,11 @@ $('#sugg').addEventListener('click',e=>{
 
 /* 郵便番号→住所（zipcloud・無料／GASのURLは不要） */
 let lastZip='';
-$('#zipInput').addEventListener('input',()=>{
+$('#zipInput').addEventListener('input',e=>{
+  // 入力欄の値を直接読む（F.zipの更新より先にこの処理が動くため）
+  F.zip=e.target.value;
   const z=String(F.zip).replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/\D/g,'');
-  if(z.length!==7)return;
+  if(z.length!==7){if(z.length<7)lastZip='';saveDraft();return}
   F.zip=z.slice(0,3)+'-'+z.slice(3);$('#zipInput').value=F.zip;saveDraft();
   if(z===lastZip)return;lastZip=z;
   const cb='zc'+Date.now(),sc=document.createElement('script');
@@ -483,6 +496,7 @@ $('#btnSend').onclick=()=>{
   const t=buildText(o);copyText(t); // 先にコピー（iPhone対策）
   showResult(t,'sending');
   rememberCustomer(o);
+  newOrder(); // 記録したら入力欄は自動で空にする（内容は記録・未送信保存済み）
   sendOrder(o).then(res=>setStatus(res));
 };
 async function sendOrder(o){
@@ -520,12 +534,12 @@ function showResult(text,state){
     <div class="grid">
       <a class="btn line-btn" href="${lineUrl}">LINEで送る</a>
       <button class="btn sub" id="mCopy">もう一度コピー</button>
-      ${state?'<button class="btn wide" id="mNext">次の受注を入力</button>':'<button class="btn sub wide" id="mClose">閉じる</button>'}
+      ${state?'<button class="btn wide" id="mNext">閉じる（入力欄は空になっています）</button>':'<button class="btn sub wide" id="mClose">閉じる</button>'}
     </div>`;
   $('#modal').classList.add('on');
   $('#mCopy').onclick=()=>{copyText(text);toast('コピーしました')};
   if($('#mClose'))$('#mClose').onclick=closeModal;
-  if($('#mNext'))$('#mNext').onclick=()=>{F=blank();saveDraft();bindFields();closeModal();scrollTo(0,0)};
+  if($('#mNext'))$('#mNext').onclick=()=>{closeModal();scrollTo(0,0)};
 }
 function setStatus(res){
   const el=$('#sendStatus');if(!el)return;
@@ -673,7 +687,7 @@ $$('nav button').forEach(b=>b.onclick=()=>{
 });
 
 /* ---------- ホーム画面アイコン ---------- */
-(function(){
+(function(){try{
   const c=document.createElement('canvas');c.width=c.height=512;const x=c.getContext('2d');
   x.fillStyle='#24406B';x.fillRect(0,0,512,512);
   x.strokeStyle='#B8912A';x.lineWidth=18;x.beginPath();x.arc(256,256,180,0,Math.PI*2);x.stroke();
@@ -681,7 +695,7 @@ $$('nav button').forEach(b=>b.onclick=()=>{
   const icon=c.toDataURL('image/png');$('#touchIcon').href=icon;
   const m={name:'お米 受注・配達',short_name:'お米受注',start_url:location.href.split('#')[0],display:'standalone',background_color:'#EEF0EA',theme_color:'#24406B',icons:[{src:icon,sizes:'512x512',type:'image/png'}]};
   $('#manifestLink').href=URL.createObjectURL(new Blob([JSON.stringify(m)],{type:'application/manifest+json'}));
-})();
+}catch(e){}})(); // アイコン作成に失敗しても本体は動かす
 
 /* ---------- 起動 ---------- */
 if(!F.staff&&S.staff)F.staff=S.staff;
