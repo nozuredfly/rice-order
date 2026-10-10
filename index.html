@@ -137,15 +137,15 @@ a.btn{text-decoration:none;text-align:center;display:block}
 
   <div class="slip">
     <h2>お客様</h2>
-    <div class="row"><label>電話番号（ハイフンは自動で入ります）</label><input data-f="tel" type="tel" inputmode="tel" placeholder="09012345678" id="telInput"></div>
     <div class="row">
       <div class="two">
-        <div><label>お名前（2文字で候補が出ます）</label><input data-f="name" placeholder="田原 太郎" id="nameInput" autocomplete="off"></div>
-        <div><label>ふりがな</label><input data-f="kana" placeholder="たはら たろう" id="kanaInput" autocomplete="off"></div>
+        <div><label>お名前（1〜2文字で台帳から候補）</label><input data-f="name" placeholder="田原 太郎" id="nameInput" autocomplete="off"></div>
+        <div><label>ふりがな（候補検索にも使えます）</label><input data-f="kana" placeholder="たはら たろう" id="kanaInput" autocomplete="off"></div>
       </div>
       <div class="sugg" id="sugg" hidden></div>
       <div class="badge" id="custBadge" hidden></div>
     </div>
+    <div class="row"><label>電話番号（ハイフン自動・番号からも呼び出せます）</label><input data-f="tel" type="tel" inputmode="tel" placeholder="09012345678" id="telInput"></div>
     <div class="row"><label>郵便番号（7桁入れると住所が自動で入ります）</label><input data-f="zip" inputmode="numeric" placeholder="4413400" id="zipInput"></div>
     <div class="row"><label>住所（建物名・部屋番号まで）</label><textarea data-f="addr" rows="2"></textarea></div>
   </div>
@@ -385,7 +385,21 @@ $('#telInput').addEventListener('change',()=>{
 });
 
 /* 登録済みのお客様：表示と名前の候補 */
-function findCustomer(){const k=telKey(F.tel);if(!k)return null;return custList.find(x=>x.key===k)||(customers[k]?Object.assign({local:true},customers[k]):null)}
+// ひらがな・カタカナ・空白の違いを無視して比べる
+const kn=s=>String(s||'').replace(/[\s　]/g,'').replace(/[\u30a1-\u30f6]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60));
+// 台帳＋この端末だけに残っているお客様
+function allCust(){
+  const L=[...custList];
+  Object.entries(customers).forEach(([k,c])=>{if(!L.some(x=>x.key===k))L.push(Object.assign({key:k,tel:formatTel(k),count:0,sales:0,local:true},c))});
+  return L;
+}
+function findCustomer(){
+  const k=telKey(F.tel);
+  if(k){const c=custList.find(x=>x.key===k)||(customers[k]?Object.assign({local:true},customers[k]):null);if(c)return c}
+  const q=kn(F.name);if(!q)return null;
+  const L=custList.filter(x=>kn(x.name)===q);
+  return L.length===1?L[0]:null;
+}
 function renderBadge(){
   const el=$('#custBadge'),c=findCustomer(),k=telKey(F.tel);
   if(c&&!c.local){
@@ -400,11 +414,13 @@ function fillCustomer(c){
   saveDraft();bindFields();$('#sugg').hidden=true;
 }
 function showSugg(q){
-  const box=$('#sugg');q=String(q||'').replace(/\s/g,'');
-  if(q.length<2||!custList.length){box.hidden=true;return}
-  const norm=s=>String(s||'').replace(/\s/g,'');
-  const L=custList.filter(c=>norm(c.name).includes(q)||norm(c.kana).includes(q)).sort((a,b)=>b.count-a.count).slice(0,6);
-  if(!L.length||(L.length===1&&telKey(L[0].tel)===telKey(F.tel))){box.hidden=true;return}
+  const box=$('#sugg');q=kn(q);
+  const all=allCust();
+  // 漢字・かなは1文字から、英数字は2文字から
+  if(!all.length||!q||(q.length<2&&/^[\x00-\x7f]$/.test(q))){box.hidden=true;return}
+  const rank=c=>kn(c.name)===q||kn(c.kana)===q?0:kn(c.name).startsWith(q)||kn(c.kana).startsWith(q)?1:2;
+  const L=all.filter(c=>kn(c.name).includes(q)||kn(c.kana).includes(q)).sort((a,b)=>rank(a)-rank(b)||b.count-a.count).slice(0,6);
+  if(!L.length||(L.length===1&&F.tel&&telKey(L[0].tel)===telKey(F.tel))){box.hidden=true;return}
   box.innerHTML=L.map((c,i)=>`<button type="button" data-i="${i}"><b>${esc(c.name)} 様</b>${c.kana?' <small style="display:inline">'+esc(c.kana)+'</small>':''}<small>${esc(c.tel||'電話なし')}　${esc(String(c.addr||'').slice(0,18))}　${c.count}回</small></button>`).join('');
   box._list=L;box.hidden=false;
 }
@@ -413,10 +429,17 @@ function showSugg(q){
   $(s).addEventListener('focus',e=>showSugg(e.target.value));
   $(s).addEventListener('blur',()=>setTimeout(()=>{$('#sugg').hidden=true},250));
 });
+$('#nameInput').addEventListener('input',()=>renderBadge());
+$('#nameInput').addEventListener('change',()=>{
+  const q=kn(F.name);if(!q||telKey(F.tel))return;
+  const L=allCust().filter(c=>kn(c.name)===q);
+  if(L.length===1){fillCustomer(L[0]);toast(`${L[0].name} 様の情報を入れました`+(L[0].count?`（${L[0].count+1}回目の注文です）`:''))}
+  else if(L.length>1){toast(`同じお名前の方が${L.length}人います。候補から選んでください`,true);setTimeout(()=>showSugg(F.name),300)}
+});
 $('#sugg').addEventListener('mousedown',e=>e.preventDefault()); // タップ前にblurで消えないように
 $('#sugg').addEventListener('click',e=>{
   const b=e.target.closest('button[data-i]');if(!b)return;const c=$('#sugg')._list[b.dataset.i];
-  fillCustomer(c);toast(`${c.name} 様の情報を入れました`);
+  fillCustomer(c);toast(`${c.name} 様の情報を入れました`+(c.count?`（${c.count+1}回目の注文です）`:''));
 });
 
 /* 郵便番号→住所（zipcloud・無料／GASのURLは不要） */
